@@ -1,0 +1,19 @@
+docs/releases/release-v0.8.3.md
+  s_006eb556670f70::t_1100c1a65295b0 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d061bd8277a59be9b6c4bb61fea68b23a26f1270",
+  "prompts": {},
+  "sessions": {
+    "s_006eb556670f70": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6ee3-3e9f-7cd0-bca4-e7e232f1d92c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yanguibao <yanguibao@jtexpress.com>"
+    }
+  }
+}
