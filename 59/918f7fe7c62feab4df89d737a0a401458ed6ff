@@ -1,0 +1,19 @@
+package.json
+  s_43bdbd63572f0d::t_70ab3056ac356b 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "59918f7fe7c62feab4df89d737a0a401458ed6ff",
+  "prompts": {},
+  "sessions": {
+    "s_43bdbd63572f0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6d5c-a7cd-7e00-8b00-0de8cd1d5316",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yanguibao <yanguibao@jtexpress.com>"
+    }
+  }
+}
