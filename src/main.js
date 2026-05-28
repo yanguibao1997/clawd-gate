@@ -18,6 +18,8 @@ const initPermission = require("./permission");
 const { registerPermissionIpc } = initPermission;
 const { createTelegramApprovalSidecar } = require("./telegram-approval-sidecar");
 const telegramApprovalSettings = require("./telegram-approval-settings");
+const feishuApprovalSettings = require("./feishu-approval-settings");
+const { FeishuApprovalClient } = require("./feishu-approval-client");
 const initUpdateBubble = require("./update-bubble");
 const { registerUpdateBubbleIpc } = initUpdateBubble;
 const createSettingsAnimationOverridesMain = require("./settings-animation-overrides-main");
@@ -216,6 +218,10 @@ let telegramApprovalSidecar = null;
 let telegramApprovalSyncPromise = Promise.resolve();
 let telegramApprovalConfigSignature = "";
 let telegramApprovalTokenRevision = 0;
+let feishuApprovalClient = null;
+let feishuApprovalSyncPromise = Promise.resolve();
+let feishuApprovalConfigSignature = "";
+let feishuApprovalSecretsRevision = 0;
 let hardwareBuddyAdapter = null;
 let hardwareBuddyStatus = null;
 let hardwareBuddyTestApprovalPromise = null;
@@ -259,6 +265,10 @@ const _settingsController = createSettingsController({
     getTelegramApprovalStatus: () => getTelegramApprovalStatus(),
     getTelegramApprovalTokenInfo: () => getTelegramApprovalTokenInfo(),
     sendTelegramApprovalTest: () => sendTelegramApprovalTest(),
+    writeFeishuApprovalSecrets: (secrets) => writeFeishuApprovalSecrets(secrets),
+    getFeishuApprovalStatus: () => getFeishuApprovalStatus(),
+    getFeishuApprovalSecretInfo: () => getFeishuApprovalSecretInfo(),
+    sendFeishuApprovalTest: () => sendFeishuApprovalTest(),
     // Theme runtime is wired after theme-loader.init(); keep these closures
     // lazy so settings actions never capture a pre-init runtime reference.
     activateTheme: (id, variantId, overrideMap) => themeRuntime.activateTheme(id, variantId, overrideMap),
@@ -976,6 +986,10 @@ const _permCtx = {
   clearShortcutFailure: (actionId) => shortcutRuntime.clearFailure(actionId),
   repositionUpdateBubble: () => repositionUpdateBubble(),
   getTelegramApprovalClient: () => getTelegramApprovalClient(),
+  getRemoteApprovalClients: () => {
+    const client = getFeishuApprovalClient();
+    return client ? [{ name: "feishu", client }] : [];
+  },
   onPermissionsChanged: () => {
     if (hardwareBuddyAdapter) hardwareBuddyAdapter.notifyPermissionsChanged();
   },
@@ -1389,8 +1403,21 @@ function getTelegramApprovalClient() {
   return telegramApprovalSidecar.getClient();
 }
 
+function getFeishuApprovalClient() {
+  return feishuApprovalClient && typeof feishuApprovalClient.isEnabled === "function" && feishuApprovalClient.isEnabled()
+    ? feishuApprovalClient
+    : null;
+}
+
 function telegramApprovalLog(level, message, meta = {}) {
   const parts = [`telegram approval sidecar ${level}: ${message}`];
+  if (meta && meta.text) parts.push(String(meta.text).trim());
+  if (meta && meta.error) parts.push(String(meta.error).trim());
+  permLog(parts.filter(Boolean).join(" | "));
+}
+
+function feishuApprovalLog(level, message, meta = {}) {
+  const parts = [`feishu approval ${level}: ${message}`];
   if (meta && meta.text) parts.push(String(meta.text).trim());
   if (meta && meta.error) parts.push(String(meta.error).trim());
   permLog(parts.filter(Boolean).join(" | "));
@@ -1412,6 +1439,191 @@ function getTelegramApprovalPaths() {
     configPath: telegramApprovalSettings.defaultBridgeConfigPath(userDataDir),
     tokenEnvFilePath: telegramApprovalSettings.defaultTokenEnvFilePath(userDataDir),
   };
+}
+
+function getFeishuApprovalPrefs() {
+  return feishuApprovalSettings.normalizeFeishuApproval(_settingsController.get("feishuApproval"));
+}
+
+function getFeishuApprovalPaths() {
+  const userDataDir = app.getPath("userData");
+  return {
+    userDataDir,
+    secretsEnvFilePath: feishuApprovalSettings.defaultSecretsEnvFilePath(userDataDir),
+  };
+}
+
+function getFeishuApprovalSecrets() {
+  const paths = getFeishuApprovalPaths();
+  return feishuApprovalSettings.readSecretsEnvFile({
+    fs,
+    filePath: paths.secretsEnvFilePath,
+  });
+}
+
+function getFeishuApprovalSecretInfo() {
+  const paths = getFeishuApprovalPaths();
+  return feishuApprovalSettings.readMaskedSecrets({
+    fs,
+    filePath: paths.secretsEnvFilePath,
+  });
+}
+
+function buildFeishuApprovalSignature(config, paths, secrets) {
+  return JSON.stringify({
+    enabled: config.enabled === true,
+    idType: config.idType,
+    approverId: config.approverId,
+    secretsEnvFilePath: paths.secretsEnvFilePath,
+    appId: secrets.appId,
+    appSecret: secrets.appSecret ? "set" : "",
+    verificationToken: secrets.verificationToken ? "set" : "",
+    encryptKey: secrets.encryptKey ? "set" : "",
+    secretsRevision: feishuApprovalSecretsRevision,
+  });
+}
+
+function getFeishuApprovalStatus() {
+  const config = getFeishuApprovalPrefs();
+  const secrets = getFeishuApprovalSecrets();
+  const ready = feishuApprovalSettings.readiness(config, secrets);
+  const clientStatus = feishuApprovalClient && typeof feishuApprovalClient.getStatus === "function"
+    ? feishuApprovalClient.getStatus()
+    : { status: "stopped" };
+  return {
+    ...clientStatus,
+    enabled: config.enabled === true,
+    configured: ready.ready === true,
+    reason: ready.reason || "",
+    message: clientStatus.message || ready.message || "",
+    secretsStored: !!(secrets.appId || secrets.appSecret || secrets.verificationToken || secrets.encryptKey),
+  };
+}
+
+function writeFeishuApprovalSecrets(secrets) {
+  const paths = getFeishuApprovalPaths();
+  const result = feishuApprovalSettings.writeSecretsEnvFile({
+    fs,
+    path,
+    filePath: paths.secretsEnvFilePath,
+    secrets,
+    platform: process.platform,
+  });
+  if (result && result.status === "ok") {
+    feishuApprovalSecretsRevision += 1;
+    queueFeishuApprovalSync("secrets");
+  }
+  return result;
+}
+
+async function startFeishuApprovalClient() {
+  const config = getFeishuApprovalPrefs();
+  const paths = getFeishuApprovalPaths();
+  const secrets = getFeishuApprovalSecrets();
+  const ready = feishuApprovalSettings.readiness(config, secrets);
+  if (!ready.ready) {
+    if (feishuApprovalClient) stopFeishuApprovalClient();
+    if (ready.reason !== "disabled") {
+      feishuApprovalLog("info", ready.reason || "not configured", {
+        error: ready.message || "",
+      });
+    }
+    return false;
+  }
+  const signature = buildFeishuApprovalSignature(config, paths, secrets);
+  if (feishuApprovalClient && feishuApprovalConfigSignature === signature) {
+    try {
+      await feishuApprovalClient.start();
+      return true;
+    } catch (err) {
+      feishuApprovalLog("warn", "start failed", { error: err && err.message ? err.message : String(err) });
+      return false;
+    }
+  }
+  stopFeishuApprovalClient();
+  feishuApprovalClient = new FeishuApprovalClient({
+    appId: secrets.appId,
+    appSecret: secrets.appSecret,
+    verificationToken: secrets.verificationToken,
+    encryptKey: secrets.encryptKey,
+    approverId: config.approverId,
+    idType: config.idType,
+    log: feishuApprovalLog,
+  });
+  feishuApprovalConfigSignature = signature;
+  try {
+    await feishuApprovalClient.start();
+    feishuApprovalLog("info", "running");
+    return true;
+  } catch (err) {
+    feishuApprovalLog("warn", "start failed", { error: err && err.message ? err.message : String(err) });
+    return false;
+  }
+}
+
+function stopFeishuApprovalClient() {
+  const client = feishuApprovalClient;
+  feishuApprovalClient = null;
+  feishuApprovalConfigSignature = "";
+  if (client && typeof client.close === "function") {
+    try { client.close(); } catch (err) {
+      feishuApprovalLog("warn", "stop failed", { error: err && err.message ? err.message : String(err) });
+    }
+  }
+}
+
+async function syncFeishuApproval(reason = "settings") {
+  const config = getFeishuApprovalPrefs();
+  const secrets = getFeishuApprovalSecrets();
+  const ready = feishuApprovalSettings.readiness(config, secrets);
+  if (!ready.ready) {
+    stopFeishuApprovalClient();
+    return false;
+  }
+  const started = await startFeishuApprovalClient();
+  if (started) feishuApprovalLog("debug", `sync ${reason}`);
+  return started;
+}
+
+function queueFeishuApprovalSync(reason) {
+  feishuApprovalSyncPromise = feishuApprovalSyncPromise
+    .catch(() => {})
+    .then(() => syncFeishuApproval(reason));
+  return feishuApprovalSyncPromise;
+}
+
+function feishuApprovalUnavailableMessage(status) {
+  if (status && status.message) return status.message;
+  if (status && status.reason === "disabled") return "Feishu approval is disabled";
+  if (status && status.reason === "missing-secret") return "Feishu App ID and App Secret are not configured";
+  if (status && status.reason === "invalid-config") return "Feishu approval config is incomplete";
+  return "Feishu approval client is not running";
+}
+
+async function sendFeishuApprovalTest() {
+  const beforeStatus = getFeishuApprovalStatus();
+  if (beforeStatus.configured !== true) {
+    return { status: "error", message: feishuApprovalUnavailableMessage(beforeStatus) };
+  }
+  await queueFeishuApprovalSync("test");
+  const client = getFeishuApprovalClient();
+  if (!client || typeof client.requestApproval !== "function") {
+    return { status: "error", message: feishuApprovalUnavailableMessage(getFeishuApprovalStatus()) };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60 * 1000);
+  try {
+    const decision = await client.requestApproval({
+      title: "Clawd Feishu approval test",
+      detail: "This is a settings test message. It is not attached to any agent permission request.",
+    }, { signal: controller.signal });
+    if (decision === "allow" || decision === "deny") {
+      return { status: "ok", decision };
+    }
+    return { status: "error", message: "Feishu test did not receive a button response" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function getTelegramApprovalTokenStatus() {
@@ -2010,6 +2222,9 @@ settingsEffectRouter.start();
 _settingsController.subscribeKey("tgApproval", () => {
   queueTelegramApprovalSidecarSync("settings");
 });
+_settingsController.subscribeKey("feishuApproval", () => {
+  queueFeishuApprovalSync("settings");
+});
 
 animationOverridesMain = createSettingsAnimationOverridesMain({
   app,
@@ -2561,6 +2776,7 @@ if (!gotTheLock) {
     sessionDebugLog = path.join(app.getPath("userData"), "session-debug.log");
     focusDebugLog = path.join(app.getPath("userData"), "focus-debug.log");
     queueTelegramApprovalSidecarSync("startup");
+    queueFeishuApprovalSync("startup");
     createWindow();
     if (shouldOpenSettingsWindowFromArgv(process.argv)) {
       settingsWindowRuntime.open();
@@ -2609,6 +2825,7 @@ if (!gotTheLock) {
     globalShortcut.unregisterAll();
     void settingsSizePreviewSession.cleanup();
     stopTelegramApprovalSidecar();
+    stopFeishuApprovalClient();
     if (typeof unsubscribeHardwareBuddySettings === "function") {
       unsubscribeHardwareBuddySettings();
       unsubscribeHardwareBuddySettings = null;

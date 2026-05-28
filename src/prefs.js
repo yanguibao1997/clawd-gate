@@ -27,6 +27,10 @@ const {
   normalizeTelegramApproval,
 } = require("./telegram-approval-settings");
 const {
+  cloneDefaultFeishuApproval,
+  normalizeFeishuApproval,
+} = require("./feishu-approval-settings");
+const {
   DEFAULT_HARDWARE_BUDDY_SETTINGS,
   normalizeHardwareBuddySettings,
 } = require("./hardware-buddy-settings");
@@ -221,6 +225,11 @@ const SCHEMA = {
     type: "object",
     defaultFactory: () => cloneDefaultTelegramApproval(),
     normalize: normalizeTelegramApproval,
+  },
+  feishuApproval: {
+    type: "object",
+    defaultFactory: () => cloneDefaultFeishuApproval(),
+    normalize: normalizeFeishuApproval,
   },
   hardwareBuddy: {
     type: "object",

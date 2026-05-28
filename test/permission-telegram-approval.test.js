@@ -158,11 +158,16 @@ describe("permission telegram remote approval", () => {
 
   it("aborts the remote request when the local permission resolves first", async () => {
     let signal;
+    const externalUpdates = [];
     const client = {
       isEnabled: () => true,
       requestApproval: (_payload, options) => {
         signal = options.signal;
         return new Promise(() => {});
+      },
+      resolveApprovalExternally: (targetSignal, outcome) => {
+        externalUpdates.push({ targetSignal, outcome });
+        return true;
       },
     };
     const perm = initPermission(makeCtx({ getTelegramApprovalClient: () => client }));
@@ -175,9 +180,55 @@ describe("permission telegram remote approval", () => {
     perm.resolvePermissionEntry(entry, "deny");
 
     assert.equal(signal.aborted, true);
+    assert.equal(externalUpdates.length, 1);
+    assert.equal(externalUpdates[0].targetSignal, signal);
+    assert.deepEqual(externalUpdates[0].outcome, {
+      decision: "deny",
+      actionLabel: "拒绝",
+      source: "desktop",
+    });
     assert.equal(perm.pendingPermissions.length, 0);
     const body = JSON.parse(entry.res.captured.body);
     assert.deepEqual(body.hookSpecificOutput.decision, { behavior: "deny" });
+  });
+
+  it("sends permission suggestions to remote clients and resolves selected suggestion", async () => {
+    let resolveApproval;
+    const requests = [];
+    const client = {
+      isEnabled: () => true,
+      requestApproval: (payload) => {
+        requests.push(payload);
+        return new Promise((resolve) => { resolveApproval = resolve; });
+      },
+    };
+    const perm = initPermission(makeCtx({ getTelegramApprovalClient: () => client }));
+    const entry = makePermEntry({
+      suggestions: [{
+        type: "setMode",
+        mode: "acceptEdits",
+        destination: "localSettings",
+      }],
+    });
+    perm.pendingPermissions.push(entry);
+
+    assert.equal(perm.maybeStartRemoteApproval(entry), true);
+    assert.deepEqual(requests[0].suggestions, [{ index: 0, label: "自动接受编辑" }]);
+
+    resolveApproval("suggestion:0");
+    await flush();
+    await flush();
+
+    assert.equal(perm.pendingPermissions.length, 0);
+    const body = JSON.parse(entry.res.captured.body);
+    assert.deepEqual(body.hookSpecificOutput.decision, {
+      behavior: "allow",
+      updatedPermissions: [{
+        type: "setMode",
+        mode: "acceptEdits",
+        destination: "localSettings",
+      }],
+    });
   });
 
   it("does not start remote approval for non-actionable entries", () => {
@@ -248,11 +299,16 @@ describe("permission telegram remote approval", () => {
 
   it("aborts the remote request when the user picks deny-and-focus (go to terminal)", () => {
     let signal;
+    const externalUpdates = [];
     const client = {
       isEnabled: () => true,
       requestApproval: (_payload, options) => {
         signal = options.signal;
         return new Promise(() => {});
+      },
+      resolveApprovalExternally: (targetSignal, outcome) => {
+        externalUpdates.push({ targetSignal, outcome });
+        return true;
       },
     };
     const perm = initPermission(makeCtx({ getTelegramApprovalClient: () => client }));
@@ -267,6 +323,77 @@ describe("permission telegram remote approval", () => {
     perm.dismissPermissionForTerminal(entry);
 
     assert.equal(signal.aborted, true);
+    assert.equal(externalUpdates.length, 1);
+    assert.equal(externalUpdates[0].targetSignal, signal);
+    assert.deepEqual(externalUpdates[0].outcome, {
+      decision: "terminal",
+      actionLabel: "前往终端",
+      source: "desktop",
+    });
     assert.equal(perm.pendingPermissions.indexOf(entry), -1);
+  });
+
+  it("remote terminal action closes the local bubble path and focuses terminal", async () => {
+    let resolveApproval;
+    let focused = 0;
+    const client = {
+      isEnabled: () => true,
+      requestApproval: () => new Promise((resolve) => { resolveApproval = resolve; }),
+    };
+    const perm = initPermission(makeCtx({
+      getTelegramApprovalClient: () => client,
+      focusTerminalForSession: () => { focused += 1; },
+    }));
+    const entry = makePermEntry();
+    perm.pendingPermissions.push(entry);
+
+    assert.equal(perm.maybeStartRemoteApproval(entry), true);
+    resolveApproval("terminal");
+    await flush();
+    await flush();
+
+    assert.equal(perm.pendingPermissions.indexOf(entry), -1);
+    assert.equal(focused, 1);
+    assert.equal(entry.res.captured.ended, false);
+  });
+
+  it("starts every configured remote approval client and resolves from the first decision", async () => {
+    let feishuResolve;
+    let telegramSignal;
+    let feishuSignal;
+    const telegramClient = {
+      isEnabled: () => true,
+      requestApproval: (_payload, options) => {
+        telegramSignal = options.signal;
+        return new Promise(() => {});
+      },
+    };
+    const feishuClient = {
+      isEnabled: () => true,
+      requestApproval: (_payload, options) => {
+        feishuSignal = options.signal;
+        return new Promise((resolve) => { feishuResolve = resolve; });
+      },
+    };
+    const perm = initPermission(makeCtx({
+      getTelegramApprovalClient: () => telegramClient,
+      getRemoteApprovalClients: () => [feishuClient],
+    }));
+    const entry = makePermEntry();
+    perm.pendingPermissions.push(entry);
+
+    assert.equal(perm.maybeStartRemoteApproval(entry), true);
+    assert.equal(telegramSignal.aborted, false);
+    assert.equal(feishuSignal.aborted, false);
+
+    feishuResolve("deny");
+    await flush();
+    await flush();
+
+    assert.equal(telegramSignal.aborted, true);
+    assert.equal(feishuSignal.aborted, true);
+    assert.equal(perm.pendingPermissions.length, 0);
+    const body = JSON.parse(entry.res.captured.body);
+    assert.deepEqual(body.hookSpecificOutput.decision, { behavior: "deny" });
   });
 });

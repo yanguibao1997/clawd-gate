@@ -718,6 +718,14 @@ function basenameForDisplay(value) {
   return parts.length ? parts[parts.length - 1] : text;
 }
 
+function remoteApprovalDecisionLabel(decision) {
+  if (decision === "allow") return "批准一次";
+  if (decision === "deny") return "拒绝";
+  if (decision === "terminal") return "前往终端";
+  if (decision === "no-decision") return "未返回审批结果";
+  return "";
+}
+
 function compactRemoteApprovalText(value, maxLen = 200) {
   let text = typeof value === "string" ? value : String(value == null ? "" : value);
   text = text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
@@ -765,6 +773,41 @@ function buildRemoteApprovalSummary(permEntry) {
   return null;
 }
 
+function buildRemoteSuggestionLabel(suggestion) {
+  if (!suggestion || typeof suggestion !== "object") return "";
+  if (suggestion.type === "setMode") {
+    if (suggestion.mode === "acceptEdits") return "自动接受编辑";
+    if (suggestion.mode === "plan") return "切换到 Plan 模式";
+    return suggestion.mode ? `切换到 ${compactRemoteApprovalText(suggestion.mode, 60)}` : "更新权限模式";
+  }
+  if (suggestion.type === "addRules") {
+    const rule = Array.isArray(suggestion.rules) && suggestion.rules[0] ? suggestion.rules[0] : suggestion;
+    const ruleContent = typeof rule.ruleContent === "string" ? rule.ruleContent : "";
+    const toolName = compactRemoteApprovalText(rule.toolName || suggestion.toolName || "", 60);
+    if (ruleContent.includes("**")) {
+      const dir = ruleContent.split("**")[0].replace(/[\\/]$/, "").split(/[\\/]/).pop() || ruleContent;
+      return `允许 ${toolName || "工具"} 在 ${compactRemoteApprovalText(dir, 50)}/`;
+    }
+    if (ruleContent) {
+      return `始终允许 \`${compactRemoteApprovalText(ruleContent, 32)}\``;
+    }
+  }
+  return "始终允许";
+}
+
+function buildRemoteApprovalSuggestions(permEntry) {
+  const suggestions = Array.isArray(permEntry && permEntry.suggestions) ? permEntry.suggestions : [];
+  const result = [];
+  const seen = new Set();
+  suggestions.forEach((suggestion, index) => {
+    const label = buildRemoteSuggestionLabel(suggestion);
+    if (!label || seen.has(label)) return;
+    seen.add(label);
+    result.push({ index, label });
+  });
+  return result;
+}
+
 // Returns the Telegram approval payload, or null when there is no safe summary
 // to ship. Callers must treat null as a no-op signal — never send a card
 // without an action-describing summary.
@@ -791,6 +834,11 @@ function buildRemoteApprovalPayload(permEntry) {
   return {
     title: `${agentId} requests ${toolName}`,
     detail,
+    agentId,
+    toolName,
+    folder: sessionFolder,
+    summary,
+    suggestions: buildRemoteApprovalSuggestions(permEntry),
   };
 }
 
@@ -804,11 +852,68 @@ function getTelegramApprovalClient() {
   return ctx.telegramApprovalClient || null;
 }
 
-function cancelRemoteApproval(permEntry) {
+function getRemoteApprovalClients() {
+  const clients = [];
+  const telegramClient = getTelegramApprovalClient();
+  if (telegramClient) clients.push({ name: "telegram", client: telegramClient });
+  if (typeof ctx.getRemoteApprovalClients === "function") {
+    let extra = [];
+    try {
+      extra = ctx.getRemoteApprovalClients() || [];
+    } catch (err) {
+      permLog(`remote approval client lookup failed: ${compactRemoteApprovalText(err && err.message ? err.message : err, 200)}`);
+    }
+    for (const entry of Array.isArray(extra) ? extra : []) {
+      if (!entry) continue;
+      const name = typeof entry.name === "string" && entry.name ? entry.name : "remote";
+      const client = entry.client || entry;
+      if (client && client !== telegramClient) clients.push({ name, client });
+    }
+  }
+  return clients.filter(({ client }) => {
+    if (!client || typeof client.requestApproval !== "function") return false;
+    return !(typeof client.isEnabled === "function" && !client.isEnabled());
+  });
+}
+
+function notifyRemoteApprovalResolved(permEntry, outcome = {}, options = {}) {
+  const requests = Array.isArray(permEntry && permEntry.remoteApprovalRequests)
+    ? [...permEntry.remoteApprovalRequests]
+    : [];
+  let notified = 0;
+  for (const request of requests) {
+    if (!request || request.name === options.skipClientName) continue;
+    const client = request.client;
+    if (!client || typeof client.resolveApprovalExternally !== "function") continue;
+    try {
+      if (client.resolveApprovalExternally(request.signal, outcome)) notified += 1;
+    } catch (err) {
+      permLog(`${request.name || "remote"} remote approval update failed: ${compactRemoteApprovalText(err && err.message ? err.message : err, 200)}`);
+    }
+  }
+  return notified;
+}
+
+function cancelRemoteApproval(permEntry, options = {}) {
+  if (options.outcome) {
+    notifyRemoteApprovalResolved(permEntry, options.outcome, {
+      skipClientName: options.skipClientName,
+    });
+  }
+  const controllers = [];
+  if (permEntry && Array.isArray(permEntry.remoteApprovalAbortControllers)) {
+    controllers.push(...permEntry.remoteApprovalAbortControllers);
+    permEntry.remoteApprovalAbortControllers = [];
+  }
   const controller = permEntry && permEntry.remoteApprovalAbortController;
-  if (!controller) return;
-  permEntry.remoteApprovalAbortController = null;
-  try { controller.abort(); } catch {}
+  if (controller) {
+    controllers.push(controller);
+    permEntry.remoteApprovalAbortController = null;
+  }
+  for (const item of controllers) {
+    try { item.abort(); } catch {}
+  }
+  if (permEntry) permEntry.remoteApprovalRequests = [];
 }
 
 // "Go to terminal" path: drop the bubble, abort any in-flight Telegram prompt,
@@ -819,7 +924,15 @@ function dismissPermissionForTerminal(perm) {
   if (!perm) return;
   // Cancel before splicing so a late Telegram decision can't slip in between
   // the splice and the abort.
-  cancelRemoteApproval(perm);
+  const remoteOutcome = perm.remoteApprovalResolution || {
+    decision: "terminal",
+    actionLabel: "前往终端",
+    source: "desktop",
+  };
+  cancelRemoteApproval(perm, {
+    outcome: remoteOutcome,
+    skipClientName: perm.remoteApprovalSkipClientName,
+  });
   const idx = pendingPermissions.indexOf(perm);
   if (idx !== -1) {
     pendingPermissions.splice(idx, 1);
@@ -839,47 +952,147 @@ function dismissPermissionForTerminal(perm) {
 
 function maybeStartRemoteApproval(permEntry) {
   if (!isRemoteApprovalActionable(permEntry)) return false;
-  const client = getTelegramApprovalClient();
-  if (!client || typeof client.requestApproval !== "function") return false;
-  if (typeof client.isEnabled === "function" && !client.isEnabled()) return false;
+  const clients = getRemoteApprovalClients();
+  if (!clients.length) return false;
 
   const payload = buildRemoteApprovalPayload(permEntry);
   if (!payload) return false;
 
-  const controller = typeof AbortController === "function" ? new AbortController() : null;
-  if (controller) permEntry.remoteApprovalAbortController = controller;
+  const controllers = [];
+  const remoteRequests = [];
+  let started = false;
 
-  let request;
-  try {
-    request = client.requestApproval(
-      payload,
-      controller ? { signal: controller.signal } : {}
-    );
-  } catch (err) {
-    if (controller && permEntry.remoteApprovalAbortController === controller) {
-      permEntry.remoteApprovalAbortController = null;
+  for (const { name, client } of clients) {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    if (controller) controllers.push(controller);
+    let request;
+    try {
+      request = client.requestApproval(
+        payload,
+        controller ? { signal: controller.signal } : {}
+      );
+      remoteRequests.push({
+        name,
+        client,
+        controller,
+        signal: controller ? controller.signal : null,
+      });
+      permEntry.remoteApprovalRequests = remoteRequests;
+      started = true;
+    } catch (err) {
+      permLog(`${name} remote approval failed: ${compactRemoteApprovalText(err && err.message ? err.message : err, 200)}`);
+      continue;
     }
-    permLog(`telegram remote approval failed: ${compactRemoteApprovalText(err && err.message ? err.message : err, 200)}`);
-    return false;
+    Promise.resolve(request)
+      .then((decision) => {
+        if (!isRemoteApprovalDecision(decision)) {
+          if (decision) permLog(`${name} remote approval ignored decision=${compactRemoteApprovalText(decision, 40)}`);
+          return;
+        }
+        handleRemoteApprovalDecision(permEntry, decision, name);
+      })
+      .catch((err) => {
+        permLog(`${name} remote approval failed: ${compactRemoteApprovalText(err && err.message ? err.message : err, 200)}`);
+      })
+      .finally(() => {
+        if (!controller || !Array.isArray(permEntry.remoteApprovalAbortControllers)) return;
+        const idx = permEntry.remoteApprovalAbortControllers.indexOf(controller);
+        if (idx !== -1) permEntry.remoteApprovalAbortControllers.splice(idx, 1);
+      });
+  }
+  if (!started) return false;
+  permEntry.remoteApprovalRequests = remoteRequests;
+  if (controllers.length) {
+    permEntry.remoteApprovalAbortControllers = controllers;
+    permEntry.remoteApprovalAbortController = controllers[0];
+  }
+  return started;
+}
+
+function isRemoteApprovalDecision(decision) {
+  return decision === "allow"
+    || decision === "deny"
+    || decision === "terminal"
+    || (typeof decision === "string" && /^suggestion:\d+$/.test(decision));
+}
+
+function remoteDecisionSource(name) {
+  return name === "feishu" ? "feishu" : "remote";
+}
+
+function applyPermissionSuggestion(perm, behavior) {
+  const idx = parseInt(String(behavior).split(":")[1], 10);
+  const suggestion = perm.suggestions?.[idx];
+  if (!suggestion) return null;
+  permLog(`suggestion raw: ${JSON.stringify(suggestion)}`);
+  if (suggestion.type === "addRules") {
+    const rules = Array.isArray(suggestion.rules) ? suggestion.rules
+      : [{ toolName: suggestion.toolName, ruleContent: suggestion.ruleContent }];
+    perm.resolvedSuggestion = {
+      type: "addRules",
+      destination: suggestion.destination || "localSettings",
+      behavior: suggestion.behavior || "allow",
+      rules,
+    };
+  } else if (suggestion.type === "setMode") {
+    perm.resolvedSuggestion = {
+      type: "setMode",
+      mode: suggestion.mode,
+      destination: suggestion.destination || "localSettings",
+    };
+  }
+  return buildRemoteSuggestionLabel(suggestion);
+}
+
+function setRemoteResolutionOutcome(permEntry, outcome, sourceName) {
+  permEntry.remoteApprovalResolution = outcome;
+  permEntry.remoteApprovalSkipClientName = sourceName || "";
+}
+
+function handleRemoteApprovalDecision(permEntry, decision, sourceName) {
+  if (pendingPermissions.indexOf(permEntry) === -1) return;
+  const source = remoteDecisionSource(sourceName);
+  if (decision === "terminal") {
+    setRemoteResolutionOutcome(permEntry, {
+      decision: "terminal",
+      actionLabel: "前往终端",
+      source,
+    }, sourceName);
+    if (permEntry.isCodex || permEntry.isQwenCode || permEntry.isAntigravity) {
+      resolvePermissionEntry(permEntry, "no-decision", "Go to terminal from remote approval");
+      ctx.focusTerminalForSession(permEntry.sessionId, { fallbackEntry: buildPermissionFocusEntry(permEntry) });
+    } else {
+      dismissPermissionForTerminal(permEntry);
+    }
+    return;
   }
 
-  Promise.resolve(request)
-    .then((decision) => {
-      if (decision !== "allow" && decision !== "deny") {
-        if (decision) permLog(`telegram remote approval ignored decision=${compactRemoteApprovalText(decision, 40)}`);
-        return;
-      }
-      resolvePermissionEntry(permEntry, decision);
-    })
-    .catch((err) => {
-      permLog(`telegram remote approval failed: ${compactRemoteApprovalText(err && err.message ? err.message : err, 200)}`);
-    })
-    .finally(() => {
-      if (controller && permEntry.remoteApprovalAbortController === controller) {
-        permEntry.remoteApprovalAbortController = null;
-      }
-    });
-  return true;
+  if (typeof decision === "string" && decision.startsWith("suggestion:")) {
+    const label = applyPermissionSuggestion(permEntry, decision);
+    if (!label) {
+      setRemoteResolutionOutcome(permEntry, {
+        decision: "deny",
+        actionLabel: "无效权限建议",
+        source,
+      }, sourceName);
+      resolvePermissionEntry(permEntry, "deny", "Invalid suggestion index");
+      return;
+    }
+    setRemoteResolutionOutcome(permEntry, {
+      decision,
+      actionLabel: label,
+      source,
+    }, sourceName);
+    resolvePermissionEntry(permEntry, "allow");
+    return;
+  }
+
+  setRemoteResolutionOutcome(permEntry, {
+    decision,
+    actionLabel: remoteApprovalDecisionLabel(decision),
+    source,
+  }, sourceName);
+  resolvePermissionEntry(permEntry, decision);
 }
 
   function resolvePermissionEntry(permEntry, behavior, message) {
@@ -890,7 +1103,15 @@ function maybeStartRemoteApproval(permEntry) {
     }
   const idx = pendingPermissions.indexOf(permEntry);
   if (idx === -1) return;
-  cancelRemoteApproval(permEntry);
+  const remoteOutcome = permEntry.remoteApprovalResolution || {
+    decision: behavior === "deny" ? "deny" : behavior === "no-decision" ? "no-decision" : "allow",
+    actionLabel: remoteApprovalDecisionLabel(behavior === "deny" || behavior === "no-decision" ? behavior : "allow"),
+    source: "desktop",
+  };
+  cancelRemoteApproval(permEntry, {
+    outcome: remoteOutcome,
+    skipClientName: permEntry.remoteApprovalSkipClientName,
+  });
 
   // Minimum display time: if bubble just appeared and dismiss is automatic
   // (client disconnect / terminal answer), delay so user can see it briefly
@@ -1209,6 +1430,13 @@ function handleDecide(event, behavior) {
     // Codex is blocking on the hook socket. UI actions that mean "handle it
     // elsewhere" must answer no-decision immediately instead of leaving the
     // hook parked until its long timeout.
+    if (behavior === "deny-and-focus") {
+      setRemoteResolutionOutcome(perm, {
+        decision: "terminal",
+        actionLabel: "前往终端",
+        source: "desktop",
+      }, "");
+    }
     resolvePermissionEntry(perm, "no-decision", `Unsupported Codex bubble action: ${String(behavior)}`);
     if (behavior === "deny-and-focus") {
       ctx.focusTerminalForSession(perm.sessionId, { fallbackEntry: buildPermissionFocusEntry(perm) });
@@ -1220,6 +1448,13 @@ function handleDecide(event, behavior) {
       resolvePermissionEntry(perm, behavior);
       return;
     }
+    if (behavior === "deny-and-focus") {
+      setRemoteResolutionOutcome(perm, {
+        decision: "terminal",
+        actionLabel: "前往终端",
+        source: "desktop",
+      }, "");
+    }
     resolvePermissionEntry(perm, "no-decision", `Unsupported Qwen bubble action: ${String(behavior)}`);
     if (behavior === "deny-and-focus") {
       ctx.focusTerminalForSession(perm.sessionId, { fallbackEntry: buildPermissionFocusEntry(perm) });
@@ -1227,6 +1462,13 @@ function handleDecide(event, behavior) {
     return;
   }
   if (perm.isAntigravity && behavior !== "allow" && behavior !== "deny") {
+    if (behavior === "deny-and-focus") {
+      setRemoteResolutionOutcome(perm, {
+        decision: "terminal",
+        actionLabel: "前往终端",
+        source: "desktop",
+      }, "");
+    }
     resolvePermissionEntry(perm, "no-decision", `Unsupported Antigravity bubble action: ${String(behavior)}`);
     if (behavior === "deny-and-focus") {
       ctx.focusTerminalForSession(perm.sessionId, { fallbackEntry: buildPermissionFocusEntry(perm) });
@@ -1246,26 +1488,13 @@ function handleDecide(event, behavior) {
   }
   // "suggestion:N" — user picked a permission suggestion
   if (typeof behavior === "string" && behavior.startsWith("suggestion:")) {
-    const idx = parseInt(behavior.split(":")[1], 10);
-    const suggestion = perm.suggestions?.[idx];
-    if (!suggestion) { resolvePermissionEntry(perm, "deny", "Invalid suggestion index"); return; }
-    permLog(`suggestion raw: ${JSON.stringify(suggestion)}`);
-    if (suggestion.type === "addRules") {
-      const rules = Array.isArray(suggestion.rules) ? suggestion.rules
-        : [{ toolName: suggestion.toolName, ruleContent: suggestion.ruleContent }];
-      perm.resolvedSuggestion = {
-        type: "addRules",
-        destination: suggestion.destination || "localSettings",
-        behavior: suggestion.behavior || "allow",
-        rules,
-      };
-    } else if (suggestion.type === "setMode") {
-      perm.resolvedSuggestion = {
-        type: "setMode",
-        mode: suggestion.mode,
-        destination: suggestion.destination || "localSettings",
-      };
-    }
+    const label = applyPermissionSuggestion(perm, behavior);
+    if (!label) { resolvePermissionEntry(perm, "deny", "Invalid suggestion index"); return; }
+    setRemoteResolutionOutcome(perm, {
+      decision: behavior,
+      actionLabel: label,
+      source: "desktop",
+    }, "");
     resolvePermissionEntry(perm, "allow");
   } else if (behavior === "deny-and-focus") {
     dismissPermissionForTerminal(perm);
