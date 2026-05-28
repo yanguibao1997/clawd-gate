@@ -1,0 +1,34 @@
+src/feishu-approval-client.js
+  s_3dfd84a311f75d::t_af86aeca7d061f 372
+  s_3dfd84a311f75d::t_69c8ce8bebc303 1-52,57-143,145-371,373-459
+  s_3dfd84a311f75d::t_6b3faa04ce3685 53-56,144
+src/permission.js
+  s_3dfd84a311f75d::t_831a06b732a68c 980
+  s_3dfd84a311f75d::t_7dea0cef011ef1 927-931,933
+  s_3dfd84a311f75d::t_211e6f831acbce 721-728,776-810,837-841,855-907,909-916,932,934-935,955-956,961-963,965-979,981-984,986-1001,1003-1010,1012-1095,1106-1114
+  s_3dfd84a311f75d::t_0d3ef8bd9c58ab 1433-1439,1451-1457,1465-1471,1491-1497
+test/permission-telegram-approval.test.js
+  s_3dfd84a311f75d::t_7d08f7c36febb6 161,168-171,183-189,195-215,217-233,302,309-312,326-354,356-397
+  s_3dfd84a311f75d::t_b045981215f6aa 216
+test/feishu-approval-client.test.js
+  s_3dfd84a311f75d::t_d5b2c195d9a4e1 203-207
+  s_3dfd84a311f75d::t_ae1c87b97413b2 1-115,117-118,120-121,123-131,171-202,208-235
+  s_3dfd84a311f75d::t_b4b75bdf10fc58 116,119,122
+  s_3dfd84a311f75d::t_c1d2a5950c6037 132-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "716f639bcc4447b0bf16309f185156acad608553",
+  "prompts": {},
+  "sessions": {
+    "s_3dfd84a311f75d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6903-02c6-7592-950b-06406fd78fac",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yanguibao <yanguibao@jtexpress.com>"
+    }
+  }
+}
