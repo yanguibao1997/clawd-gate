@@ -166,7 +166,7 @@ function startRemoteApproval(ctx, permEntry) {
   try {
     ctx.maybeStartRemoteApproval(permEntry);
   } catch (err) {
-    ctx.permLog(`telegram remote approval start failed: ${err && err.message ? err.message : err}`);
+    ctx.permLog(`remote approval start failed: ${err && err.message ? err.message : err}`);
   }
 }
 
@@ -683,7 +683,9 @@ function handlePermissionPost(req, res, options) {
           }
           permEntry.bubble = null;
           ctx.sendPermissionResponse(res, "deny", "Elicitation bubble unavailable; answer in terminal", "Elicitation");
+          return;
         }
+        startRemoteApproval(ctx, permEntry);
         return;
       }
 

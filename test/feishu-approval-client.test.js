@@ -6,9 +6,16 @@ const test = require("node:test");
 const {
   FeishuApprovalClient,
   buildApprovalCard,
+  buildElicitationCard,
   normalizeApprovalPayload,
+  normalizeElicitationPayload,
   normalizeActionEvent,
+  normalizeElicitationActionEvent,
 } = require("../src/feishu-approval-client");
+
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 test("buildApprovalCard creates an interactive allow deny card", () => {
   const card = buildApprovalCard({
@@ -232,4 +239,282 @@ test("pure helpers validate payloads and card action events", () => {
     decision: "terminal",
   });
   assert.equal(normalizeActionEvent({ action: { value: { requestId: "req_1", decision: "later" } } }, "open_id"), null);
+});
+
+test("buildElicitationCard creates a form stepper with selection and other input", () => {
+  const card = buildElicitationCard({
+    title: "claude-code needs input",
+    agentId: "claude-code",
+    folder: "project-alpha",
+    questions: [{
+      header: "当前任务",
+      question: "您当前正在进行什么类型的工作？",
+      multiSelect: true,
+      options: [
+        { label: "开发新功能", description: "正在开发新的业务功能或模块" },
+        { label: "修复Bug", description: "正在排查和修复代码问题" },
+      ],
+    }, {
+      header: "约束条件",
+      question: "有什么特别的约束？",
+      options: [],
+    }],
+  }, { requestId: "req_q" });
+
+  assert.equal(card.config.update_multi, true);
+  assert.equal(card.header.title.content, "需要输入：claude-code");
+  assert.ok(card.elements.some((element) => element.tag === "div" && /1 \/ 2/.test(element.text.content)));
+  assert.equal(card.elements.some((element) => (
+    element.tag === "action"
+    && element.actions.some((action) => action.value && action.value.kind === "elicitation-option")
+  )), false);
+  const form = card.elements.find((element) => element.tag === "form");
+  assert.ok(form);
+  assert.equal(form.name, "elicitation_form_0");
+  const select = form.elements.find((element) => element.name === "q_0");
+  assert.ok(select);
+  assert.equal(select.tag, "multi_select_static");
+  assert.equal(select.options.length, 2);
+  assert.equal(select.options[0].text.content, "开发新功能");
+  const other = form.elements.find((element) => element.tag === "input" && element.name === "q_0_other");
+  assert.ok(other);
+  const submit = form.elements.find((element) => element.tag === "button");
+  assert.equal(submit.action_type, "form_submit");
+  assert.equal(submit.name, "elicitation_next_0");
+  assert.deepEqual(submit.value, {
+    requestId: "req_q",
+    kind: "elicitation-step",
+    questionIndex: 0,
+    final: false,
+  });
+
+  const restored = buildElicitationCard({
+    title: "claude-code needs input",
+    questions: [{
+      question: "您当前正在进行什么类型的工作？",
+      multiSelect: true,
+      options: [{ label: "开发新功能" }, { label: "修复Bug" }],
+    }],
+  }, {
+    requestId: "req_q",
+    answers: { "您当前正在进行什么类型的工作？": "开发新功能, 自定义工作" },
+  });
+  const restoredForm = restored.elements.find((element) => element.tag === "form");
+  const restoredSelect = restoredForm.elements.find((element) => element.name === "q_0");
+  const restoredOther = restoredForm.elements.find((element) => element.name === "q_0_other");
+  assert.deepEqual(restoredSelect.selected_values, ["开发新功能"]);
+  assert.equal(restoredOther.default_value, "自定义工作");
+});
+
+test("FeishuApprovalClient only resolves elicitation after final step submit", async () => {
+  const sent = [];
+  const updated = [];
+  const fakeClient = {
+    im: { v1: { message: {
+      create: async (payload) => {
+        sent.push(payload);
+        return { data: { message_id: "om_q" } };
+      },
+      patch: async (payload) => {
+        updated.push(payload);
+        return { data: {} };
+      },
+    } } },
+  };
+  const client = new FeishuApprovalClient({
+    appId: "cli_123",
+    appSecret: "secret",
+    approverId: "ou_1",
+    idType: "open_id",
+    larkClient: fakeClient,
+  });
+
+  let resolved = false;
+  const promise = client.requestElicitation({
+    title: "Need input",
+    questions: [
+      {
+        question: "Current work?",
+        multiSelect: true,
+        options: [{ label: "Feature", description: "Build new flow" }, { label: "Bugfix" }],
+      },
+      { question: "Constraints?", options: [] },
+    ],
+  }).then((value) => {
+    resolved = true;
+    return value;
+  });
+  await Promise.resolve();
+  const firstCard = JSON.parse(sent[0].data.content);
+  const requestId = firstCard.elements.find((element) => element.tag === "form")
+    .elements.find((element) => element.tag === "button").value.requestId;
+  assert.equal(client.handleCardAction({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: { requestId, kind: "elicitation-step", questionIndex: 0, final: false },
+      form_value: {
+        q_0: ["Feature", "Bugfix"],
+        q_0_other: "API cleanup",
+      },
+    },
+  }), true);
+  await Promise.resolve();
+  await flush();
+  assert.equal(resolved, false);
+  assert.equal(updated.length, 1);
+  const secondCard = JSON.parse(updated[0].data.content);
+  assert.ok(secondCard.elements.some((element) => element.tag === "div" && /2 \/ 2/.test(element.text.content)));
+
+  assert.equal(client.handleCardAction({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: { requestId, kind: "elicitation-step", questionIndex: 1, final: true },
+      form_value: { q_1_other: "Keep API stable" },
+    },
+  }), true);
+  assert.deepEqual(await promise, {
+    type: "elicitation-submit",
+    answers: {
+      "Current work?": "Feature, Bugfix, API cleanup",
+      "Constraints?": "Keep API stable",
+    },
+  });
+  assert.match(JSON.parse(updated[1].data.content).header.title.content, /已提交输入/);
+});
+
+test("FeishuApprovalClient supports back navigation without resolving elicitation", async () => {
+  const sent = [];
+  const updated = [];
+  const fakeClient = {
+    im: { v1: { message: {
+      create: async (payload) => {
+        sent.push(payload);
+        return { data: { message_id: "om_multi" } };
+      },
+      patch: async (payload) => {
+        updated.push(payload);
+        return { data: {} };
+      },
+    } } },
+  };
+  const client = new FeishuApprovalClient({
+    appId: "cli_123",
+    appSecret: "secret",
+    approverId: "ou_1",
+    idType: "open_id",
+    larkClient: fakeClient,
+  });
+
+  let resolved = false;
+  const promise = client.requestElicitation({
+    title: "Need input",
+    questions: [
+      { question: "Current work?", options: [{ label: "Feature", description: "Build new flow" }] },
+      { question: "Constraints?", options: [] },
+    ],
+  }).then((value) => {
+    resolved = true;
+    return value;
+  });
+  await Promise.resolve();
+  const firstCard = JSON.parse(sent[0].data.content);
+  const requestId = firstCard.elements.find((element) => element.tag === "form")
+    .elements.find((element) => element.tag === "button").value.requestId;
+  assert.equal(client.handleCardAction({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: { requestId, kind: "elicitation-step", questionIndex: 0, final: false },
+      form_value: { q_0: "Feature" },
+    },
+  }), true);
+  await Promise.resolve();
+  await Promise.resolve();
+  await flush();
+  assert.equal(resolved, false);
+  assert.equal(updated.length, 1);
+  const secondCard = JSON.parse(updated[0].data.content);
+  assert.ok(secondCard.elements.some((element) => element.tag === "div" && /2 \/ 2/.test(element.text.content)));
+
+  assert.equal(client.handleCardAction({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: { requestId, kind: "elicitation-back", questionIndex: 1 },
+    },
+  }), true);
+  await Promise.resolve();
+  await flush();
+  assert.equal(resolved, false);
+  assert.equal(updated.length, 2);
+  const backCard = JSON.parse(updated[1].data.content);
+  assert.ok(backCard.elements.some((element) => element.tag === "div" && /1 \/ 2/.test(element.text.content)));
+
+  assert.equal(client.handleCardAction({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: { requestId, kind: "elicitation-step", questionIndex: 0, final: false },
+      form_value: { q_0_other: "Custom feature" },
+    },
+  }), true);
+  await Promise.resolve();
+  await flush();
+  assert.equal(client.handleCardAction({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: { requestId, kind: "elicitation-step", questionIndex: 1, final: true },
+      form_value: { q_1_other: "Keep API stable" },
+    },
+  }), true);
+
+  assert.deepEqual(await promise, {
+    type: "elicitation-submit",
+    answers: {
+      "Current work?": "Custom feature",
+      "Constraints?": "Keep API stable",
+    },
+  });
+});
+
+test("Feishu elicitation helpers validate payloads and action events", () => {
+  assert.deepEqual(normalizeElicitationPayload({
+    title: " Need input ",
+    agentId: "claude-code",
+    folder: "project-alpha",
+    questions: [{
+      header: " H ",
+      question: " Q? ",
+      options: [{ label: " A ", description: " D " }, { label: "" }],
+    }],
+  }), {
+    title: "Need input",
+    detail: "",
+    agentId: "claude-code",
+    folder: "project-alpha",
+    questions: [{
+      header: "H",
+      question: "Q?",
+      multiSelect: false,
+      options: [{ label: "A", description: "D" }],
+    }],
+  });
+  assert.throws(() => normalizeElicitationPayload({ title: "x", questions: [] }), /questions/);
+  assert.deepEqual(normalizeElicitationActionEvent({
+    operator: { open_id: "ou_1" },
+    action: {
+      value: JSON.stringify({
+        requestId: "req_q",
+        kind: "elicitation-step",
+        questionIndex: 0,
+        final: true,
+      }),
+      form_value: { q_0: [{ value: "A", text: { content: "A" } }], q_0_other: "typed answer" },
+    },
+  }, [{ question: "Q?", multiSelect: true, options: [{ label: "A" }] }], "open_id"), {
+    operatorId: "ou_1",
+      requestId: "req_q",
+      decision: { type: "elicitation-step", questionIndex: 0, final: true, answers: { "Q?": "A, typed answer" } },
+  });
+  assert.equal(normalizeElicitationActionEvent({
+    operator: { open_id: "ou_1" },
+    action: { value: { requestId: "req_q", kind: "elicitation-step", questionIndex: 0 }, form_value: {} },
+  }, [{ question: "Q?", options: [] }], "open_id"), null);
 });

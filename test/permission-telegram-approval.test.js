@@ -258,6 +258,90 @@ describe("permission telegram remote approval", () => {
     assert.deepEqual(requests, []);
   });
 
+  it("starts Feishu elicitation and submits returned answers to Claude Code", async () => {
+    let resolveElicitation;
+    const requests = [];
+    const feishuClient = {
+      isEnabled: () => true,
+      requestApproval: () => {
+        throw new Error("normal approval should not be used for elicitation");
+      },
+      requestElicitation: (payload, options) => {
+        requests.push({ payload, options });
+        return new Promise((resolve) => { resolveElicitation = resolve; });
+      },
+    };
+    const perm = initPermission(makeCtx({ getRemoteApprovalClients: () => [{ name: "feishu", client: feishuClient }] }));
+    const entry = makePermEntry({
+      isElicitation: true,
+      toolName: "AskUserQuestion",
+      toolInput: {
+        questions: [{
+          header: "当前任务",
+          question: "您当前正在进行什么类型的工作？",
+          options: [{ label: "开发新功能", description: "正在开发新的业务功能或模块" }],
+        }],
+      },
+    });
+    perm.pendingPermissions.push(entry);
+
+    assert.equal(perm.maybeStartRemoteApproval(entry), true);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].payload.questions[0].question, "您当前正在进行什么类型的工作？");
+
+    resolveElicitation({
+      type: "elicitation-submit",
+      answers: {
+        "您当前正在进行什么类型的工作？": "开发新功能\n正在开发新的业务功能或模块",
+      },
+    });
+    await flush();
+    await flush();
+
+    assert.equal(perm.pendingPermissions.length, 0);
+    const body = JSON.parse(entry.res.captured.body);
+    assert.deepEqual(body.hookSpecificOutput.decision, {
+      behavior: "allow",
+      updatedInput: {
+        questions: entry.toolInput.questions,
+        answers: {
+          "您当前正在进行什么类型的工作？": "开发新功能\n正在开发新的业务功能或模块",
+        },
+      },
+    });
+  });
+
+  it("remote terminal action for elicitation focuses terminal and returns fallback response", async () => {
+    let resolveElicitation;
+    let focused = 0;
+    const feishuClient = {
+      isEnabled: () => true,
+      requestApproval: () => {
+        throw new Error("normal approval should not be used for elicitation");
+      },
+      requestElicitation: () => new Promise((resolve) => { resolveElicitation = resolve; }),
+    };
+    const perm = initPermission(makeCtx({
+      getRemoteApprovalClients: () => [{ name: "feishu", client: feishuClient }],
+      focusTerminalForSession: () => { focused += 1; },
+    }));
+    const entry = makePermEntry({
+      isElicitation: true,
+      toolName: "AskUserQuestion",
+      toolInput: { questions: [{ question: "Anything else?", options: [] }] },
+    });
+    perm.pendingPermissions.push(entry);
+
+    assert.equal(perm.maybeStartRemoteApproval(entry), true);
+    resolveElicitation("terminal");
+    await flush();
+    await flush();
+
+    assert.equal(perm.pendingPermissions.length, 0);
+    assert.equal(focused, 1);
+    assert.match(entry.res.captured.body, /Elicitation/);
+  });
+
   it("sends a remote card using the same formatter as the desktop bubble when tool input lacks description", () => {
     const requests = [];
     const client = {

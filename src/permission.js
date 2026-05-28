@@ -724,6 +724,7 @@ function remoteApprovalDecisionLabel(decision) {
   if (decision === "deny") return "拒绝";
   if (decision === "terminal") return "前往终端";
   if (decision === "no-decision") return "未返回审批结果";
+  if (decision === "elicitation-submit") return "提交输入";
   return "";
 }
 
@@ -741,7 +742,8 @@ function compactRemoteApprovalText(value, maxLen = 200) {
 
 function isRemoteApprovalActionable(permEntry) {
   if (!permEntry || typeof permEntry !== "object") return false;
-  if (permEntry.isElicitation || permEntry.isCodexNotify || permEntry.isKimiNotify || permEntry.isOpencode || permEntry.isAntigravity) return false;
+  if (permEntry.isElicitation) return true;
+  if (permEntry.isCodexNotify || permEntry.isKimiNotify || permEntry.isOpencode || permEntry.isAntigravity) return false;
   if (permEntry.toolName === "ExitPlanMode" || permEntry.toolName === "AskUserQuestion") return false;
   if (PASSTHROUGH_TOOLS.has(permEntry.toolName)) return false;
   // Headless sessions auto-deny locally; mirror that on the Telegram side so a
@@ -751,6 +753,26 @@ function isRemoteApprovalActionable(permEntry) {
     : null;
   if (session && session.headless) return false;
   return true;
+}
+
+function buildRemoteElicitationPayload(permEntry) {
+  if (!permEntry || !permEntry.isElicitation) return null;
+  const input = permEntry.toolInput && typeof permEntry.toolInput === "object" ? permEntry.toolInput : {};
+  const questions = Array.isArray(input.questions) ? input.questions : [];
+  if (!questions.length) return null;
+  const agentId = compactRemoteApprovalText(permEntry.agentId || "claude-code", 80) || "claude-code";
+  const session = ctx.sessions.get(permEntry.sessionId);
+  const sessionFolder = compactRemoteApprovalText(
+    basenameForDisplay((session && session.cwd) || permEntry.cwd || ""),
+    80
+  );
+  return {
+    title: `${agentId} needs input`,
+    detail: compactRemoteApprovalText(input.description || input.summary || "", 200),
+    agentId,
+    folder: sessionFolder,
+    questions,
+  };
 }
 
 // Returns a redacted summary string. Prefer agent-supplied summaries, then
@@ -960,7 +982,9 @@ function maybeStartRemoteApproval(permEntry) {
   const clients = getRemoteApprovalClients();
   if (!clients.length) return false;
 
-  const payload = buildRemoteApprovalPayload(permEntry);
+  const payload = permEntry.isElicitation
+    ? buildRemoteElicitationPayload(permEntry)
+    : buildRemoteApprovalPayload(permEntry);
   if (!payload) return false;
 
   const controllers = [];
@@ -972,10 +996,18 @@ function maybeStartRemoteApproval(permEntry) {
     if (controller) controllers.push(controller);
     let request;
     try {
-      request = client.requestApproval(
-        payload,
-        controller ? { signal: controller.signal } : {}
-      );
+      if (permEntry.isElicitation) {
+        if (typeof client.requestElicitation !== "function") continue;
+        request = client.requestElicitation(
+          payload,
+          controller ? { signal: controller.signal } : {}
+        );
+      } else {
+        request = client.requestApproval(
+          payload,
+          controller ? { signal: controller.signal } : {}
+        );
+      }
       remoteRequests.push({
         name,
         client,
@@ -1018,6 +1050,7 @@ function isRemoteApprovalDecision(decision) {
   return decision === "allow"
     || decision === "deny"
     || decision === "terminal"
+    || (decision && typeof decision === "object" && decision.type === "elicitation-submit")
     || (typeof decision === "string" && /^suggestion:\d+$/.test(decision));
 }
 
@@ -1063,12 +1096,27 @@ function handleRemoteApprovalDecision(permEntry, decision, sourceName) {
       actionLabel: "前往终端",
       source,
     }, sourceName);
+    if (permEntry.isElicitation) {
+      resolvePermissionEntry(permEntry, "deny", "User answered in terminal");
+      return;
+    }
     if (permEntry.isCodex || permEntry.isQwenCode || permEntry.isAntigravity) {
       resolvePermissionEntry(permEntry, "no-decision", "Go to terminal from remote approval");
       ctx.focusTerminalForSession(permEntry.sessionId, { fallbackEntry: buildPermissionFocusEntry(permEntry) });
     } else {
       dismissPermissionForTerminal(permEntry);
     }
+    return;
+  }
+
+  if (permEntry.isElicitation && decision && typeof decision === "object" && decision.type === "elicitation-submit") {
+    permEntry.resolvedUpdatedInput = buildElicitationUpdatedInput(permEntry.toolInput, decision.answers);
+    setRemoteResolutionOutcome(permEntry, {
+      decision: "elicitation-submit",
+      actionLabel: "提交输入",
+      source,
+    }, sourceName);
+    resolvePermissionEntry(permEntry, "allow");
     return;
   }
 

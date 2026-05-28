@@ -492,6 +492,24 @@ describe("server-route-permission POST", () => {
     }]);
   });
 
+  it("starts remote elicitation only after the desktop elicitation bubble is shown", async () => {
+    const order = [];
+    const res = await callPermissionPost(JSON.stringify({
+      agent_id: "claude-code",
+      session_id: "sid",
+      tool_name: "AskUserQuestion",
+      tool_input: { questions: [{ question: "Continue?", options: [] }] },
+    }), {
+      ctx: {
+        showPermissionBubble: () => order.push("bubble"),
+        maybeStartRemoteApproval: () => order.push("remote"),
+      },
+    });
+
+    assert.strictEqual(res.statusCode, null);
+    assert.deepStrictEqual(order, ["bubble", "remote"]);
+  });
+
   it("keeps local Claude permission pending if remote approval startup throws", async () => {
     const res = await callPermissionPost(JSON.stringify({
       agent_id: "claude-code",
@@ -511,13 +529,10 @@ describe("server-route-permission POST", () => {
     assert.match(res.ctx.calls.logs.join("\n"), /sidecar unavailable/);
   });
 
-  it("does not start remote approval for elicitation, passthrough, DND, or opencode paths", async () => {
+  it("does not start remote approval for non-actionable, passthrough, DND, or opencode paths", async () => {
     const cases = [
       {
         body: { tool_name: "ExitPlanMode", tool_input: { plan: "ship it" } },
-      },
-      {
-        body: { tool_name: "AskUserQuestion", tool_input: { questions: [] } },
       },
       {
         body: { tool_name: "TaskList", tool_input: {} },
