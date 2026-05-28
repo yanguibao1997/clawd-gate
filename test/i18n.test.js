@@ -44,6 +44,17 @@ function loadSettingsI18nStrings() {
   return context.ClawdSettingsI18n.STRINGS;
 }
 
+function loadSettingsI18nMetadata() {
+  const source = fs.readFileSync(path.join(ROOT, "src", "settings-i18n.js"), "utf8");
+  const context = {};
+  context.globalThis = context;
+  vm.runInNewContext(source, context);
+  return {
+    maintainers: Array.from(context.ClawdSettingsI18n.MAINTAINERS),
+    contributors: Array.from(context.ClawdSettingsI18n.CONTRIBUTORS),
+  };
+}
+
 function loadBubbleStrings() {
   const source = fs.readFileSync(path.join(ROOT, "src", "bubble-renderer.js"), "utf8");
   const match = source.match(/const BUBBLE_STRINGS = (\{[\s\S]*?\n\});/);
@@ -68,6 +79,13 @@ describe("i18n locales", () => {
 
   it("keeps permission bubble locale keysets aligned with English", () => {
     assertLocaleObjectParity(loadBubbleStrings(), "bubble");
+  });
+
+  it("uses the fork owner as the current About maintainer and contributor", () => {
+    assert.deepStrictEqual(loadSettingsI18nMetadata(), {
+      maintainers: ["yanguibao1997"],
+      contributors: ["yanguibao1997"],
+    });
   });
 
   it("keeps main-process Settings dialog strings available for every supported language", () => {

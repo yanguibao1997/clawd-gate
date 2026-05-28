@@ -5,7 +5,7 @@ const fs = require("fs");
 const electron = require("electron");
 
 const isMac = process.platform === "darwin";
-const RELEASES_LATEST_URL = "https://github.com/rullerzhou-afk/clawd-on-desk/releases/latest";
+const RELEASES_LATEST_URL = "https://github.com/yanguibao1997/clawd-gate/releases/latest";
 
 function makeTranslate(ctx) {
   return (key, fallback) => {
@@ -442,7 +442,7 @@ function initUpdater(ctx, deps = {}) {
       if (lastReleaseEtag) headers["If-None-Match"] = lastReleaseEtag;
       const req = httpsGet({
         hostname: "api.github.com",
-        path: "/repos/rullerzhou-afk/clawd-on-desk/releases/latest",
+        path: "/repos/yanguibao1997/clawd-gate/releases/latest",
         headers,
       }, (res) => {
         // 304 Not Modified — drain and serve the cached release.

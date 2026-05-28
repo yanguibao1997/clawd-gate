@@ -737,7 +737,7 @@ describe("updater visual flow", () => {
       await handlers["update-available"]({ version: "0.5.11" });
 
       assert.deepStrictEqual(bubbles.map((bubble) => bubble.mode), ["checking", "available", "ready"]);
-      assert.strictEqual(openedUrls[0], "https://github.com/rullerzhou-afk/clawd-on-desk/releases/latest");
+      assert.strictEqual(openedUrls[0], "https://github.com/yanguibao1997/clawd-gate/releases/latest");
       assert.match(bubbles[2].message, /opened/i);
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
@@ -1201,8 +1201,10 @@ describe("updater #329 background scheduler", () => {
 
   it("fetchLatestRelease sends If-None-Match on the second call and resolves 304 from cache", async () => {
     let callIndex = 0;
+    const requestOptions = [];
     const requestHeaders = [];
     const httpsGetImpl = (options, cb) => {
+      requestOptions.push(options);
       requestHeaders.push(options.headers);
       const isSecond = callIndex === 1;
       callIndex += 1;
@@ -1230,6 +1232,8 @@ describe("updater #329 background scheduler", () => {
     const first = await updater.quietDiscover();
     assert.strictEqual(first.status, "new-update");
     assert.strictEqual(first.version, "v0.9.0");
+    assert.strictEqual(requestOptions[0].hostname, "api.github.com");
+    assert.strictEqual(requestOptions[0].path, "/repos/yanguibao1997/clawd-gate/releases/latest");
     assert.strictEqual(requestHeaders[0]["If-None-Match"], undefined);
 
     const second = await updater.quietDiscover();

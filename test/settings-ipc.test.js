@@ -620,11 +620,11 @@ test("settings IPC serves agent/about/update/external and remove-theme dialog he
     ]);
     assert.deepStrictEqual(await ipcMain.invoke("settings:get-about-info"), {
       version: "1.2.3",
-      repoUrl: "https://github.com/rullerzhou-afk/clawd-on-desk",
+      repoUrl: "https://github.com/yanguibao1997/clawd-gate",
       license: "AGPL-3.0",
-      copyright: "\u00a9 2026 Ruller_Lulu",
-      authorName: "Ruller_Lulu / \u9e7f\u9e7f",
-      authorUrl: "https://github.com/rullerzhou-afk",
+      copyright: "\u00a9 2026 \u963f\u5b9d\u8239\u957f",
+      authorName: "\u963f\u5b9d\u8239\u957f",
+      authorUrl: "https://github.com/yanguibao1997",
       heroSvgContent: "<svg id=\"hero\"></svg>",
       pendingUpdateVersion: "",
       autoUpdateCheck: true,

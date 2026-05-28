@@ -616,7 +616,7 @@
       aboutContributorsShowAll: "Show all",
       aboutContributorsHide: "Hide",
       aboutFooter: "Clawd is open source. Built with care by the community.",
-      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — Ruller_Lulu / \u9e7f\u9e7f",
+      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — \u963f\u5b9d\u8239\u957f",
       aboutOpenExternalFailed: "Couldn't open the link in your browser.",
     },
     zh: {
@@ -1231,7 +1231,7 @@
       aboutContributorsShowAll: "展开全部",
       aboutContributorsHide: "收起",
       aboutFooter: "Clawd 是开源项目 · 与社区一起打造。",
-      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — Ruller_Lulu / \u9e7f\u9e7f",
+      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — \u963f\u5b9d\u8239\u957f",
       aboutOpenExternalFailed: "无法在浏览器中打开链接。",
     },
     "zh-TW": {
@@ -1846,7 +1846,7 @@
       aboutContributorsShowAll: "展開全部",
       aboutContributorsHide: "收合",
       aboutFooter: "Clawd 是開源專案 · 和社群一起做出來的。",
-      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — Ruller_Lulu / 鹿鹿",
+      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — \u963f\u5b9d\u8239\u957f",
       aboutOpenExternalFailed: "無法開啟瀏覽器連結。",
     },
     ko: {
@@ -2461,7 +2461,7 @@
       aboutContributorsShowAll: "모두 보기",
       aboutContributorsHide: "접기",
       aboutFooter: "Clawd는 오픈 소스 · 커뮤니티와 함께 만듭니다.",
-      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — Ruller_Lulu / \u9e7f\u9e7f",
+      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — \u963f\u5b9d\u8239\u957f",
       aboutOpenExternalFailed: "링크를 브라우저에서 열 수 없습니다.",
     },
     ja: {
@@ -3078,24 +3078,14 @@
       aboutContributorsShowAll: "すべて表示",
       aboutContributorsHide: "折りたたむ",
       aboutFooter: "Clawd はオープンソース。コミュニティと一緒に作っています。",
-      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — Ruller_Lulu / 鹿鹿",
+      aboutEasterEggToast: "\u{1F980} Coding shouldn't feel lonely. — \u963f\u5b9d\u8239\u957f",
       aboutOpenExternalFailed: "ブラウザでリンクを開けませんでした。",
     },
   };
 
-  const MAINTAINERS = [
-    "rullerzhou-afk", "YOIMIYA66",
-  ];
+  const MAINTAINERS = ["yanguibao1997"];
 
-  const CONTRIBUTORS = [
-    "PixelCookie-zyf", "yujiachen-y", "AooooooZzzz", "purefkh", "Tobeabellwether", "Jasonhonghh", "crashchen",
-    "hongbigtou", "InTimmyDate", "NeizhiTouhu", "xu3stones-cmd", "androidZzT", "Ye-0413", "WanfengzzZ",
-    "TaoXieSZ", "ssly", "stickycandy", "Rladmsrl", "YOIMIYA66", "Kevin7Qi", "sefuzhou770801-hub",
-    "Tonic-Jin", "seoki180", "sophie-haynes", "PeterShanxin", "CHIANGANGSTER", "JaeHyeon-KAIST", "hhhzxyhhh",
-    "TVpoet", "zeus6768", "anhtrinh919", "tomaioo", "v-avuso", "livlign", "tongguang2",
-    "Ziy1-Tan", "tatsuyanakanogaroinc", "yeonhub", "joshua-wu", "nmsn", "sunnysonx", "YuChenYunn", "jhseo-b",
-    "Hwasowl", "XiangZheng2002", "keiyo118", "pan93412", "taehwanis", "linnin233", "xiyouMc",
-  ];
+  const CONTRIBUTORS = ["yanguibao1997"];
 
   root.ClawdSettingsI18n = {
     STRINGS,

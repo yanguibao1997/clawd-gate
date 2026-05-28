@@ -50,7 +50,7 @@
     "electron",
     "claude-code"
   ],
-  "author": "rullerzhou-afk",
+  "author": "\u963f\u5b9d\u8239\u957f",
   "license": "AGPL-3.0-only",
   "type": "commonjs",
   "build": {
@@ -96,7 +96,7 @@
       ]
     },
     "linux": {
-      "maintainer": "rullerzhou-afk <rullerzhou-afk@users.noreply.github.com>",
+      "maintainer": "yanguibao1997 <yanguibao1997@users.noreply.github.com>",
       "icon": "assets/icons",
       "category": "Utility",
       "artifactName": "Clawd-on-Desk-${version}-${arch}.${ext}",
@@ -157,8 +157,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "rullerzhou-afk",
-        "repo": "clawd-on-desk"
+        "owner": "yanguibao1997",
+        "repo": "clawd-gate"
       }
     ]
   },
