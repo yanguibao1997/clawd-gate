@@ -4,6 +4,7 @@
 const { BrowserWindow, globalShortcut } = require("electron");
 const { getDefaultShortcuts } = require("./shortcut-actions");
 const { keepOutOfTaskbar } = require("./taskbar");
+const { formatDetail: formatBubbleDetail } = require("./bubble-format");
 const path = require("path");
 const http = require("http");
 const {
@@ -752,11 +753,8 @@ function isRemoteApprovalActionable(permEntry) {
   return true;
 }
 
-// Returns a redacted summary string, or null when no agent-supplied description
-// is available. We refuse to send a Telegram approval card without something
-// describing the action — the local bubble shows the full tool input, so a
-// Telegram-only "Tool input hidden by Clawd." card would let the user approve
-// a black box.
+// Returns a redacted summary string. Prefer agent-supplied summaries, then
+// fall back to the same compact formatter used by the desktop bubble.
 function buildRemoteApprovalSummary(permEntry) {
   const input = permEntry && permEntry.toolInput && typeof permEntry.toolInput === "object"
     ? permEntry.toolInput
@@ -770,6 +768,13 @@ function buildRemoteApprovalSummary(permEntry) {
     const text = compactRemoteApprovalText(candidate, 200);
     if (text) return text;
   }
+  const bubbleDetail = formatBubbleDetail(
+    permEntry && permEntry.toolName,
+    input,
+    { isAntigravity: !!(permEntry && permEntry.isAntigravity) }
+  );
+  const fallbackText = compactRemoteApprovalText(bubbleDetail, 200);
+  if (fallbackText) return fallbackText;
   return null;
 }
 

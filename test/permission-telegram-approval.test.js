@@ -258,7 +258,7 @@ describe("permission telegram remote approval", () => {
     assert.deepEqual(requests, []);
   });
 
-  it("does not send a Telegram card when the tool input lacks a description/summary/reason", () => {
+  it("sends a remote card using the same formatter as the desktop bubble when tool input lacks description", () => {
     const requests = [];
     const client = {
       isEnabled: () => true,
@@ -268,14 +268,15 @@ describe("permission telegram remote approval", () => {
       },
     };
     const perm = initPermission(makeCtx({ getTelegramApprovalClient: () => client }));
-    // Bare Bash payload — only `command`. Local bubble shows the full command
-    // but Telegram would only get "Tool input hidden by Clawd.", so the guard
-    // must refuse to send.
     const entry = makePermEntry({
-      toolInput: { command: "rm -rf /tmp/scratch" },
+      toolName: "Edit",
+      toolInput: { file_path: "/tmp/project-alpha/src/app.js" },
     });
-    assert.equal(perm.maybeStartRemoteApproval(entry), false);
-    assert.deepEqual(requests, []);
+    assert.equal(perm.maybeStartRemoteApproval(entry), true);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].toolName, "Edit");
+    assert.equal(requests[0].summary, "/tmp/project-alpha/src/app.js");
+    assert.match(requests[0].detail, /Summary: \/tmp\/project-alpha\/src\/app\.js/);
   });
 
   it("does not send a Telegram card for headless sessions", () => {
