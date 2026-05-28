@@ -1,0 +1,32 @@
+src/updater.js
+  s_72acd1b39ac438::t_839bf4d1380ef7 8,445
+package.json
+  s_72acd1b39ac438::t_839bf4d1380ef7 53,99,160-161
+src/settings-i18n.js
+  s_72acd1b39ac438::t_839bf4d1380ef7 619,1234,1849,2464,3081,3086,3088
+test/updater.test.js
+  s_72acd1b39ac438::t_28e8f1712352f4 740,1204,1207,1235-1236
+test/settings-ipc.test.js
+  s_72acd1b39ac438::t_28e8f1712352f4 623,625-627
+src/settings-ipc.js
+  s_72acd1b39ac438::t_839bf4d1380ef7 401,403-405
+test/i18n.test.js
+  s_72acd1b39ac438::t_b66640245b9796 53-54
+  s_72acd1b39ac438::t_28e8f1712352f4 47-52,55-57,84-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "01168218007a3b99b6cf6b16bb613ae0ebdc7df6",
+  "prompts": {},
+  "sessions": {
+    "s_72acd1b39ac438": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6cb1-9387-7471-bff9-5da088bd3318",
+        "model": "gpt-5.5"
+      },
+      "human_author": "yanguibao <yanguibao@jtexpress.com>"
+    }
+  }
+}
